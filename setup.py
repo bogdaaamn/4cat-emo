@@ -67,8 +67,11 @@ processor_packages = {
 	"razdel~=0.5",  # tokenise
 	"scenedetect[opencv]>=0.7",  # video_scene_identifier
 	"scikit-learn",  # image_wall, histwords, tf_idf, topic_modeling, classification_evaluation, confusion_matrix
+	"spacy>=3.7,<4.0",  # text_statistics (also pinned by textacy, which does not support spaCy 4)
 	"Telethon~=1.36.0",  # search_telegram, download_telegram_videos, download-telegram-images
+	"textacy~=0.13.0",  # text_statistics
 	"unidecode~=1.3",  # accent_fold
+	"vaderSentiment~=3.3",  # sentiment_vader
 	"wordcloud~=1.8",  # word-cloud
 	# The https://github.com/akamhy/videohash is not being maintained anymore; these are two patches
 	"imagedominantcolor @ git+https://github.com/dale-wahl/imagedominantcolor.git@pillow10",
