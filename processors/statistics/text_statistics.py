@@ -44,13 +44,7 @@ class TextStatistics(BasicProcessor):
 	compatibility = Compatibility(types={"tokenise-posts"})
 
 	references = [
-		"[textacy text_stats documentation](https://textacy.readthedocs.io/en/latest/api_reference/text_stats.html)",
-		"[Herdan, Gustav. 1960. *Type-token mathematics: A textbook of mathematical linguistics*. The Hague: Mouton.](https://archive.org/details/typetokenmathema0000herd)",
-		"[Guiraud, Pierre. 1960. *Problèmes et méthodes de la statistique linguistique*. Dordrecht: D. Reidel.](https://link.springer.com/book/10.1007/978-94-011-6103-5)",
-		"[Covington, Michael A., and Joe D. McFall. 2010. \"Cutting the Gordian knot: The moving-average type-token ratio (MATTR).\" *Journal of Quantitative Linguistics* (17), 2: 94–100.](https://doi.org/10.1080/09296171003643098)",
-		"[McCarthy, Philip M., and Scott Jarvis. 2010. \"MTLD, vocd-D, and HD-D: A validation study of sophisticated approaches to lexical diversity assessment.\" *Behavior Research Methods* (42), 2: 381–392.](https://doi.org/10.3758/BRM.42.2.381)",
-		"[Simpson, Edward H. 1949. \"Measurement of diversity.\" *Nature* (163): 688.](https://doi.org/10.1038/163688a0)",
-		"[Lexical diversity - Wikipedia](https://en.wikipedia.org/wiki/Lexical_diversity)"
+		"[textacy text_stats documentation](https://textacy.readthedocs.io/en/latest/api_reference/text_stats.html)"
 	]
 
 	@classmethod
