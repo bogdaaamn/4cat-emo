@@ -1,0 +1,56 @@
+# LocalAI override: adds a local, OpenAI-compatible speech-to-text server and
+# points the backend's OpenAI SDK calls at it. This keeps audio transcription
+# ("Audio to text", "Transcribe videos") entirely on this machine -- no audio
+# is sent to OpenAI and no API credit is used.
+#
+# This is an override, never a standalone stack. Layer it on top of a base file
+# with an extra -f, and combine freely with docker-compose_dev.yml:
+#   docker compose -f docker-compose_build.yml -f docker-compose_localai.yml up -d
+#   docker compose -f docker-compose_build.yml -f docker-compose_dev.yml -f docker-compose_localai.yml up -d
+#
+# How the redirect works: `audio-to-text` constructs its client as
+# openai.OpenAI(api_key=...) with no base_url, and the OpenAI SDK falls back to
+# the OPENAI_BASE_URL environment variable. Setting it below sends every request
+# from that processor to the localai service instead of api.openai.com. No code
+# change is involved.
+#
+# Two things still have to be set up outside this file:
+#   1. The "whisper-1" model, installed once from LocalAI's gallery:
+#        curl http://localhost:8080/models/apply \
+#          -H "Content-Type: application/json" -d '{"id":"localai@whisper-1"}'
+#      The gallery entry is already named "whisper-1", which is exactly what the
+#      processor requests when "Whisper V2" is selected, so no model YAML of our
+#      own is needed.
+#   2. A non-empty API key (Settings -> api.openai.api_key, or the per-run
+#      field). The processor refuses to run without one even though the local
+#      server ignores it.
+#
+# CAVEAT: OPENAI_BASE_URL applies to the whole backend container, so any other
+# openai-SDK client built without an explicit base_url is redirected too.
+# common/lib/llm/adapter.py only sets base_url when an LLM connection has a URL
+# configured, so an LLM connection intended for the real OpenAI API would end up
+# here instead. Don't use this override if you have one of those.
+
+services:
+  localai:
+    image: localai/localai:${LOCALAI_TAG:-latest}
+    container_name: 4cat_localai
+    environment:
+      # LocalAI's default upload limit is 15MB, which `audio-extractor` output
+      # exceeds after ~4 minutes of video: it writes uncompressed 16kHz WAV
+      # (~64 KB/s at stereo), so anything longer returns HTTP 413 and the
+      # transcription for that file comes back empty. This is a cap, not a
+      # reservation.
+      - LOCALAI_UPLOAD_LIMIT=${LOCALAI_UPLOAD_LIMIT:-512}
+    ports:
+      # Published for convenience (the LocalAI web UI, and curl-ing it from the
+      # host); the backend reaches it over the compose network, not this port.
+      - ${LOCALAI_PORT:-8080}:8080
+    volumes:
+      - ./data/localai/models/:/models/
+
+  backend:
+    environment:
+      # Merged with env_file; `environment` wins on conflicts. Service name, not
+      # host.docker.internal -- both containers share the compose network.
+      - OPENAI_BASE_URL=http://localai:8080/v1

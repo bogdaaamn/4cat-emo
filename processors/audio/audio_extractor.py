@@ -102,6 +102,11 @@ class AudioExtractor(BasicProcessor):
                 shutil.which(self.config.get("video-downloader.ffmpeg_path")),
                 "-i", oslex.quote(str(item.file)),
                 "-ar", str(16000),
+                # Downmix to mono: speech-to-text models resample to 16kHz mono
+                # anyway, so a second channel only doubles the (uncompressed)
+                # file size, which pushes longer videos over transcription API
+                # upload limits
+                "-ac", str(1),
                 oslex.quote(str(output_dir.joinpath(f"{vid_name}.wav")))
             ]
 

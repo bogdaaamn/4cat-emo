@@ -98,7 +98,7 @@ class VideoDownloaderPlus(BasicProcessor):
 
     # Shared list -- other download_* processors reuse this as VideoDownloaderPlus.followups
     # (and preferred_followups below reuses it), so it stays a named attribute.
-    followups = ["audio-extractor", "metadata-viewer", "video-scene-detector", "preset-scene-timelines", "video-stack", "preset-video-hashes", "video-hasher-1", "video-frames"]
+    followups = ["preset-video-transcripts", "audio-extractor", "metadata-viewer", "video-scene-detector", "preset-scene-timelines", "video-stack", "preset-video-hashes", "video-hasher-1", "video-frames"]
 
     # any collector's csv/ndjson output (except sources with their own downloaders), plus the tiktok-metadata helper
     compatibility = Compatibility(is_collector=True, types={"tiktok-video-downloader-metadata"}, excluded_types={"tiktok-search", "tiktok-urls-search", "telegram-search"}, extensions={"csv", "ndjson"}, preferred_followups=followups)
