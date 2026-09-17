@@ -1,0 +1,193 @@
+# 4CAT for Dokploy (Docker Compose provider, *not* Docker Stack/Swarm --
+# this file uses `build`, which Dokploy's Stack mode does not support).
+#
+# It merges what docker-compose.yml and docker-compose_build.yml do, adapted to
+# Dokploy's constraints:
+#   * builds the image from this repo, so locally added processors, presets and
+#     datasources (and any code in config/extensions/) end up in the image;
+#   * no `container_name` -- Dokploy needs the names it generates for logs and
+#     metrics;
+#   * no published ports and no Traefik labels -- routing is set up in
+#     Dokploy's Domains tab, which attaches the frontend to Traefik's network
+#     and generates the labels at deploy time;
+#   * named volumes rather than bind mounts into the repo, because Dokploy wipes
+#     the cloned source on every deploy (and only named volumes can be backed
+#     up to S3 from the UI).
+#
+# docker-compose_dev.yml is deliberately NOT merged in: it bind-mounts the host
+# working copy over /usr/src/app for live editing. On Dokploy the source is
+# already baked into the image it just built from the same commit, and the
+# clone directory is cleared on redeploy, so that mount buys nothing and risks
+# emptying the app directory. Deploy = rebuild here.
+#
+# --- Dokploy setup -----------------------------------------------------------
+# 1. Create an application of type "Compose", provider Git, pointing at this
+#    repo, with Compose Path = ./docker-compose_dokploy.yml
+# 2. Fill in the Environment tab (Dokploy writes it to .env next to this file):
+#      DOCKER_TAG=local          POSTGRES_TAG=17
+#      POSTGRES_USER=fourcat     POSTGRES_PASSWORD=<a real secret>
+#      POSTGRES_DB=fourcat       POSTGRES_HOST_AUTH_METHOD=scram-sha-256
+#      POSTGRES_HOST=db          POSTGRES_PORT=5432
+#      MEMCACHED_HOST=memcached  MEMCACHED_PORT=11211  MEMCACHED_TAG=alpine
+#      API_HOST=backend
+#      SERVER_NAME=4cat.example.com   # the domain served by Dokploy
+#      PUBLIC_PORT=443                # what the outside world connects to
+#      worker_tmp_dir=/dev/shm  workers=4  threads=4  worker_class=gthread
+#      log_level=info
+# 3. In the Domains tab, add the domain: service `frontend`, container port
+#    5000, HTTPS on, certificate provider Let's Encrypt. Keep it identical to
+#    SERVER_NAME above.
+# 4. After the first successful deploy, log in as admin and set
+#    Control Panel -> Settings -> "Use HTTPS" (flask.https) to true, so 4CAT
+#    generates https:// links behind Traefik's TLS termination.
+# -----------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:${POSTGRES_TAG}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST_AUTH_METHOD=${POSTGRES_HOST_AUTH_METHOD}
+    volumes:
+      - 4cat_db:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - 4cat
+
+  memcached:
+    image: memcached:${MEMCACHED_TAG:-alpine}
+    restart: unless-stopped
+    command: ["-m", "64"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo stats | nc localhost 11211 | grep -q uptime"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - 4cat
+
+  backend:
+    # Both 4CAT services declare the same image name and the same build, so the
+    # image is built once and reused for the frontend.
+    image: 4cat:${DOCKER_TAG:-local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Uncomment together with the localai service below to send the backend's
+    # OpenAI SDK calls to the local transcription server. `environment` is
+    # merged with env_file and wins on conflicts.
+    # environment:
+    #   - OPENAI_BASE_URL=http://localai:8080/v1
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_healthy
+    volumes:
+      - 4cat_data:/usr/src/app/data/
+      - 4cat_config:/usr/src/app/config/
+      - 4cat_logs:/usr/src/app/logs/
+    entrypoint: docker/docker-entrypoint.sh
+    networks:
+      - 4cat
+
+  frontend:
+    image: 4cat:${DOCKER_TAG:-local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - 4cat_data:/usr/src/app/data/
+      - 4cat_config:/usr/src/app/config/
+      - 4cat_logs:/usr/src/app/logs/
+    command: ["sh", "docker/wait-for-backend.sh"]
+    # Gunicorn listens on 5000 inside the container; nothing is published to the
+    # host. The ${TELEGRAM_PORT}:443 mapping from the upstream files is dropped:
+    # no 4CAT process listens on 443, and publishing it would collide with
+    # Dokploy's Traefik.
+    #
+    # Routing is configured in Dokploy's Domains tab (service `frontend`, port
+    # 5000), not here: Dokploy generates the Traefik labels and attaches this
+    # service to dokploy-network at deploy time. Hence no labels and no
+    # dokploy-network in this file -- adding them by hand would fight with what
+    # the UI generates, and would point Traefik at the wrong network if Isolated
+    # Deployments is ever enabled.
+    networks:
+      - 4cat
+
+  # Optional: local speech-to-text for the "Audio to text" processor and the
+  # video transcription preset. Uncomment this service, the backend's
+  # OPENAI_BASE_URL above and the 4cat_localai_models volume below to keep
+  # transcription on this server -- see the header of docker-compose_localai.yml
+  # for the full explanation and its caveat: the redirect is container-wide, so
+  # do not enable it if you also want an LLM connection against the real OpenAI
+  # API.
+  #
+  # The whisper-1 model is not in the image. After enabling it, install the
+  # model once from Dokploy's terminal for this service:
+  #   curl http://localhost:8080/models/apply \
+  #     -H "Content-Type: application/json" -d '{"id":"localai@whisper-1"}'
+  # It is then persisted in the 4cat_localai_models volume.
+  # localai:
+  #   image: localai/localai:${LOCALAI_TAG:-latest}
+  #   restart: unless-stopped
+  #   environment:
+  #     # audio-extractor writes uncompressed 16kHz WAV; LocalAI's 15MB default
+  #     # upload limit is hit after a few minutes of video and returns HTTP 413.
+  #     - LOCALAI_UPLOAD_LIMIT=${LOCALAI_UPLOAD_LIMIT:-512}
+  #   volumes:
+  #     - 4cat_localai_models:/models/
+  #   networks:
+  #     - 4cat
+
+  # Optional: local LLM server for 4CAT's LLM processors. Uncomment this service
+  # and the 4cat_ollama volume, then set Control Panel -> Settings -> LLM to
+  # provider `ollama`, URL http://ollama:11434 (docker_setup.py also detects it
+  # automatically on a fresh install). Add a deploy.resources devices block for
+  # NVIDIA GPUs; see docker-compose_ollama.yml.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   restart: unless-stopped
+  #   volumes:
+  #     - 4cat_ollama:/root/.ollama
+  #   healthcheck:
+  #     test: ["CMD", "ollama", "ls"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - 4cat
+
+volumes:
+  # No `name:` overrides -- Dokploy namespaces these per application, which
+  # keeps them separate from any other stack on the same host and lets the
+  # Volume Backups feature see them.
+  4cat_db:
+  4cat_data:
+  4cat_config:
+  4cat_logs:
+  # 4cat_localai_models:
+  # 4cat_ollama:
+
+networks:
+  # Internal stack traffic (db, memcached, backend<->frontend). Dokploy adds the
+  # Traefik-facing network to the frontend itself, based on the Domains tab.
+  4cat:
